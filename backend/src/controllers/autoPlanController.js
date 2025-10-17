@@ -1,11 +1,17 @@
 // backend/src/controllers/autoPlanController.js
 import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc.js";
+import timezone from "dayjs/plugin/timezone.js";
 import Lesson from "../models/Lesson.js";
 import Schedule from "../models/Schedule.js";
 
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
 export async function autoGenerateWeek(req, res) {
   try {
-    const monday = dayjs().startOf("week").add(1, "day");
+    // 🔧 Türkiye saati ile pazartesi başlangıcı
+    const monday = dayjs().tz("Europe/Istanbul").startOf("week").add(1, "day");
     let count = 0;
 
     // Aktif programları getir
@@ -34,6 +40,8 @@ export async function autoGenerateWeek(req, res) {
       }
 
       const [hour, minute] = timeString.split(":");
+      
+      // 🔧 Türkiye saati ile tarih oluştur
       const date = monday
         .add(s.weekday - 1, "day")
         .hour(Number(hour))
