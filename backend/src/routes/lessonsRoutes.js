@@ -1,27 +1,17 @@
-import { Router } from "express";
-import {
-  listLessons,
-  createLesson,
-  updateLesson,
-  markDone,
-  markCanceled,
-  markNoShow,
-  createMakeup,
-  revertLesson
-} from "../controllers/lessonsController.js";
+import express from "express";
+import * as lessonsController from "../controllers/lessonsController.js";
+import { auth } from "../middleware/auth.js";
 
-const r = Router();
+const router = express.Router();
+router.use(auth);
 
-r.get("/", listLessons);
-r.post("/", createLesson);
-r.put("/:id", updateLesson);
+router.get("/", lessonsController.listLessons);
+router.post("/", lessonsController.createLesson);
+router.put("/:id/done", lessonsController.markDone);
+router.put("/:id/cancel", lessonsController.markCanceled);
+router.put("/:id/no-show", lessonsController.markNoShow);
+router.put("/:id/revert", lessonsController.revertLesson);
+router.delete("/clear-week", lessonsController.clearWeek);
+router.delete("/:id", lessonsController.deleteLesson);
 
-r.post("/:id/done", markDone);
-r.post("/:id/cancel", markCanceled);
-r.post("/:id/no-show", markNoShow);
-r.post("/:id/makeup", createMakeup);
-
-// ⬇️ yeni: yanlış tıklamayı geri al
-r.post("/:id/revert", revertLesson);
-
-export default r;
+export default router;

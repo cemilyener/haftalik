@@ -11,11 +11,12 @@ const lessonSchema = new mongoose.Schema({
   homeworkDue:   { type: Date },
   notes:     { type: String },
   accrualAmount: { type: Number },
-  linkedScheduleId: { type: mongoose.Schema.Types.ObjectId, ref: "Schedule" }
+  linkedScheduleId: { type: mongoose.Schema.Types.ObjectId, ref: "Schedule" },
+  slotNumber: { type: Number, min: 1, max: 6 } // 🆕 Slot numarası
 }, { timestamps: true });
 
-// Performans indeksleri
 lessonSchema.index({ startAt: 1 });
 lessonSchema.index({ studentId: 1, startAt: 1 });
+lessonSchema.index({ slotNumber: 1 }); // 🆕
 
 export default mongoose.models.Lesson || mongoose.model("Lesson", lessonSchema);

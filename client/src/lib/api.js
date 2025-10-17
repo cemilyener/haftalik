@@ -24,12 +24,14 @@ export const Students = {
   create: (payload) => api.post("/students", payload).then(r=>r.data),
   update: (id, payload) => api.put(`/students/${id}`, payload).then(r=>r.data),
   remove: (id) => api.delete(`/students/${id}`).then(r=>r.data),
+  // 🆕 Ödeme kaydet
+  recordPayment: (id, payload) => api.post(`/students/${id}/payment`, payload).then(r=>r.data),
 };
 
 export const Schedules = {
   // 🔹 TÜM LİSTE
   list: () => api.get("/schedules").then(r=>r.data),
-  // 🔹 ÖĞRENCİYE GÖRE LİSTE (EKSİK OLAN FONKSİYON)
+  // 🔹 ÖĞRENCİYE GÖRE LİSTE
   listByStudent: (studentId) => api.get(`/schedules`, { params: { studentId } }).then(r=>r.data),
   create: (payload) => api.post(`/schedules`, payload).then(r=>r.data),
   update: (id, payload) => api.put(`/schedules/${id}`, payload).then(r=>r.data),
@@ -37,10 +39,10 @@ export const Schedules = {
 };
 
 export const Lessons = {
-  done: (id) => api.post(`/lessons/${id}/done`).then(r=>r.data),
-  cancel: (id) => api.post(`/lessons/${id}/cancel`).then(r=>r.data),
-  noShow: (id) => api.post(`/lessons/${id}/no-show`).then(r=>r.data),
-  revert: (id) => api.post(`/lessons/${id}/revert`).then(r=>r.data),
+  done: (id) => api.put(`/lessons/${id}/done`).then(r=>r.data), // ✅ POST -> PUT
+  cancel: (id) => api.put(`/lessons/${id}/cancel`).then(r=>r.data), // ✅ POST -> PUT
+  noShow: (id) => api.put(`/lessons/${id}/no-show`).then(r=>r.data), // ✅ POST -> PUT
+  revert: (id) => api.put(`/lessons/${id}/revert`).then(r=>r.data), // ✅ POST -> PUT
 };
 
 export const Weekly = {

@@ -1,5 +1,6 @@
 // backend/src/controllers/studentsController.js
 import mongoose from "mongoose";
+import dayjs from "dayjs";
 import Student from "../models/Student.js";
 import Transaction from "../models/Transaction.js";
 import Lesson from "../models/Lesson.js";
@@ -121,6 +122,66 @@ export async function getBalance(req, res) {
 }
 
 /**
+ * 💰 ÖDEME KAYDET
+ */
+export async function recordPayment(req, res) {
+  try {
+    const { id } = req.params;
+    const { amount, date } = req.body;
+    
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: "Geçerli bir tutar girin" });
+    }
+    
+    const student = await Student.findById(id);
+    if (!student) {
+      return res.status(404).json({ error: "Öğrenci bulunamadı" });
+    }
+    
+    // Bakiyeyi güncelle
+    student.balance = (student.balance || 0) + Number(amount);
+    student.lastPaymentDate = date ? new Date(date) : new Date();
+    
+    // Ödeme şekline göre nextPaymentDue güncelle
+    const paymentDate = dayjs(student.lastPaymentDate);
+    
+    if (student.paymentType === "prepaid") {
+      // Peşin: 1 ay sonra
+      student.nextPaymentDue = paymentDate.add(1, "month").toDate();
+    } else if (student.paymentType === "month_end") {
+      // Ay sonu: Bir sonraki ay sonu
+      student.nextPaymentDue = paymentDate.add(1, "month").endOf("month").toDate();
+    } else if (student.paymentType === "per_lesson") {
+      // Ders başı: Bakiye 0'a yakınsa null
+      student.nextPaymentDue = student.balance >= 0 ? null : new Date();
+    }
+    
+    student.reminderSent = false;
+    await student.save();
+    
+    // Transaction kaydet
+    await Transaction.create({
+      studentId: student._id,
+      date: student.lastPaymentDate,
+      type: "payment",
+      amount: Number(amount),
+      note: req.body.note || "Ödeme alındı"
+    });
+    
+    console.log(`💰 ${student.name} - ${amount} TL ödeme kaydedildi. Yeni bakiye: ${student.balance} TL`);
+    
+    res.json({ 
+      ok: true, 
+      balance: student.balance,
+      nextPaymentDue: student.nextPaymentDue
+    });
+  } catch (err) {
+    console.error("❌ recordPayment error:", err);
+    res.status(500).json({ error: "Ödeme kaydedilemedi", message: err.message });
+  }
+}
+
+/**
  * 🧹 Orphan (sahipsiz) kayıtları temizle
  */
 export async function cleanupOrphanRecords(req, res) {
@@ -153,5 +214,54 @@ export async function cleanupOrphanRecords(req, res) {
   } catch (err) {
     console.error("❌ cleanupOrphanRecords error:", err);
     res.status(500).json({ error: "Cleanup failed", message: err.message });
+  }
+}
+
+/**
+ * 🧨 TÜM TRANSACTION'LARI SİL (Test/temizlik için)
+ */
+export async function deleteAllTransactions(req, res) {
+  try {
+    const result = await Transaction.deleteMany({});
+    console.log(`🧨 ${result.deletedCount} transaction silindi`);
+    res.json({ 
+      success: true,
+      deleted: result.deletedCount,
+      message: `${result.deletedCount} transaction başarıyla silindi`
+    });
+  } catch (err) {
+    console.error("❌ deleteAllTransactions error:", err);
+    res.status(500).json({ error: "Failed", message: err.message });
+  }
+}
+
+/**
+ * 🧹 VERİTABANINI TEMİZLE - Sadece bir kez kullan!
+ */
+export async function resetDatabase(req, res) {
+  try {
+    // Tüm öğrencileri sil
+    const students = await Student.deleteMany({});
+    // Tüm dersleri sil
+    const lessons = await Lesson.deleteMany({});
+    // Tüm sabit planları sil
+    const schedules = await Schedule.deleteMany({});
+    // Tüm işlemleri sil
+    const transactions = await Transaction.deleteMany({});
+    
+    console.log("🧹 Veritabanı temizlendi");
+    
+    res.json({
+      success: true,
+      deleted: {
+        students: students.deletedCount,
+        lessons: lessons.deletedCount,
+        schedules: schedules.deletedCount,
+        transactions: transactions.deletedCount
+      }
+    });
+  } catch (err) {
+    console.error("❌ resetDatabase error:", err);
+    res.status(500).json({ error: "Failed", message: err.message });
   }
 }

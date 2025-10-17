@@ -6,7 +6,16 @@ import { Check, Undo2, X, Ban, ChevronLeft, ChevronRight, Loader2, AlertCircle }
 
 dayjs.extend(isoWeek);
 
-const DAY_SLOT_TIMES = ["09:30","13:00","18:00","19:30","20:00","20:30"];
+// 🆕 6 SLOT SİSTEMİ - Sabahtan Akşama
+const SLOTS = [
+  { id: 1, label: "Sabah 1", defaultTime: "09:00-10:00" },
+  { id: 2, label: "Sabah 2", defaultTime: "10:00-11:00" },
+  { id: 3, label: "Öğle", defaultTime: "13:00-14:00" },
+  { id: 4, label: "Öğleden Sonra", defaultTime: "15:00-16:00" },
+  { id: 5, label: "Akşam 1", defaultTime: "17:00-18:00" },
+  { id: 6, label: "Akşam 2", defaultTime: "19:00-21:00" }
+];
+
 const WEEKDAYS = ["Pzt","Sal","Çar","Per","Cum","Cmt","Paz"];
 
 function mondayStart(d){
@@ -17,74 +26,53 @@ function mondayStart(d){
 export default function WeeklyPage(){
   const [start, setStart] = useState(mondayStart(new Date()).format("YYYY-MM-DD"));
   const [data, setData] = useState({ lessons: [], schedules: [] });
-  const [students, setStudents] = useState([]);
   const [busyId, setBusyId] = useState(null);
-  const [lessonsMapLocal, setLessonsMapLocal] = useState(new Map());
   
   // 🆕 Boş slot sayısını takip et
   const [emptySlots, setEmptySlots] = useState(0);
-  const [showAutoGenerate, setShowAutoGenerate] = useState(false);
 
   const end = useMemo(()=> dayjs(start).add(7, "day"), [start]);
-
-  useEffect(()=>{
-    (async ()=>{
-      const studs = await Students.list();
-      setStudents(studs);
-    })();
-  }, []);
 
   async function refreshWeekly() {
     const weekly = await Weekly.get(start);
     setData(weekly);
 
-    const _map = new Map();
-    (weekly.lessons||[]).forEach(l=>{
-      const dt = dayjs(l.startAt);
-      _map.set(`${dt.format("YYYY-MM-DD")}|${dt.format("HH:mm")}`, l);
-    });
-    setLessonsMapLocal(_map);
-
-    // 🆕 Boş slot kontrolü
+    // Boş slot kontrolü
     const totalSchedules = (weekly.schedules || []).length;
     const actualLessons = (weekly.lessons || []).length;
     const emptyCount = totalSchedules - actualLessons;
     
     setEmptySlots(emptyCount);
-    setShowAutoGenerate(emptyCount > 0);
   }
 
   useEffect(()=>{ refreshWeekly(); }, [start]);
 
-  const maps = useMemo(()=>{
-    const schedulesMap = new Map();
-    (data.schedules||[]).forEach(s=>{
-      const key = `${s.weekday}|${s.time}`;
-      const arr = schedulesMap.get(key) || [];
-      arr.push(s);
-      schedulesMap.set(key, arr);
+  // 🆕 Dersleri slot ve güne göre grupla
+  const lessonsByDayAndSlot = useMemo(() => {
+    const map = new Map();
+    
+    (data.lessons || []).forEach(lesson => {
+      const lessonDate = dayjs(lesson.startAt);
+      const dayIndex = lessonDate.isoWeekday() - 1; // 0=Pzt, 6=Paz
+      
+      // Slot numarasını kullan (yoksa 1)
+      const slotNumber = lesson.slotNumber || 1;
+      
+      const key = `${dayIndex}-${slotNumber}`;
+      map.set(key, lesson);
     });
-    return { lessonsMap: lessonsMapLocal, schedulesMap };
-  }, [lessonsMapLocal, data.schedules]);
+    
+    return map;
+  }, [data.lessons]);
 
   function daysArray(){
     const s = dayjs(start);
     return Array.from({length:7}, (_,i)=> s.add(i,"day"));
   }
 
-  function setLessonStatusOptimistic(lesson, status){
-    const dt = dayjs(lesson.startAt);
-    const key = `${dt.format("YYYY-MM-DD")}|${dt.format("HH:mm")}`;
-    const clone = new Map(lessonsMapLocal);
-    clone.set(key, { ...lesson, status });
-    setLessonsMapLocal(clone);
-  }
-
   async function handleMarkDone(lessonId){
     try {
       setBusyId(lessonId);
-      const l = [...lessonsMapLocal.values()].find(x=>x._id===lessonId);
-      if (l) setLessonStatusOptimistic(l, "done");
       await Lessons.done(lessonId);
     } finally {
       setBusyId(null);
@@ -95,8 +83,6 @@ export default function WeeklyPage(){
   async function handleCancel(lessonId){
     try {
       setBusyId(lessonId);
-      const l = [...lessonsMapLocal.values()].find(x=>x._id===lessonId);
-      if (l) setLessonStatusOptimistic(l, "canceled");
       await Lessons.cancel(lessonId);
     } finally {
       setBusyId(null);
@@ -107,8 +93,6 @@ export default function WeeklyPage(){
   async function handleNoShow(lessonId){
     try {
       setBusyId(lessonId);
-      const l = [...lessonsMapLocal.values()].find(x=>x._id===lessonId);
-      if (l) setLessonStatusOptimistic(l, "no_show");
       await Lessons.noShow(lessonId);
     } finally {
       setBusyId(null);
@@ -119,8 +103,6 @@ export default function WeeklyPage(){
   async function handleRevert(lessonId){
     try {
       setBusyId(lessonId);
-      const l = [...lessonsMapLocal.values()].find(x=>x._id===lessonId);
-      if (l) setLessonStatusOptimistic(l, "planned");
       await Lessons.revert(lessonId);
     } finally {
       setBusyId(null);
@@ -128,7 +110,7 @@ export default function WeeklyPage(){
     }
   }
 
-  // 🆕 Haftayı otomatik oluştur
+  // Haftayı otomatik oluştur
   async function handleAutoGenerate(){
     if (!confirm(`${emptySlots} yeni ders oluşturulacak. Devam edilsin mi?`)) return;
     
@@ -143,17 +125,38 @@ export default function WeeklyPage(){
     await refreshWeekly();
   }
 
+  // 🆕 Bu haftanın derslerini temizle fonksiyonu
+  async function handleClearWeek() {
+    if (!confirm("⚠️ Bu haftanın TÜM derslerini silmek istediğine emin misin? Bu işlem geri alınamaz!")) return;
+    
+    try {
+      const token = localStorage.getItem("token");
+      
+      // Bu haftanın başlangıç ve bitiş tarihlerini hesapla
+      const weekStart = dayjs(start).toISOString();
+      const weekEnd = dayjs(start).add(7, "day").toISOString();
+      
+      const res = await fetch(`${import.meta.env.VITE_API_BASE}/lessons/clear-week?start=${weekStart}&end=${weekEnd}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      
+      const result = await res.json();
+      alert(`✅ ${result.deletedCount} ders silindi!`);
+      await refreshWeekly();
+    } catch (err) {
+      alert("❌ Hata: " + err.message);
+    }
+  }
+
   return (
     <div className="space-y-4">
-      {/* 🆕 Uyarı mesajı */}
-      {showAutoGenerate && (
+      {/* Uyarı mesajı */}
+      {emptySlots > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
           <AlertCircle className="text-amber-600 mt-0.5" size={20}/>
           <div className="flex-1">
             <div className="font-medium text-amber-900">Bu hafta {emptySlots} sabit plan için ders oluşturulmamış</div>
-            <div className="text-sm text-amber-700 mt-1">
-              Öğrencilerin sabit planları var ama dersler oluşturulmamış. "Haftayı Oluştur" butonuna basarak otomatik oluşturabilirsin.
-            </div>
           </div>
           <button
             onClick={handleAutoGenerate}
@@ -179,78 +182,86 @@ export default function WeeklyPage(){
           Sonraki <ChevronRight size={16}/>
         </button>
         
-        {/* Manuel buton (her zaman görünür) */}
+        <button
+          onClick={handleClearWeek}
+          className="ml-auto px-3 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 transition">
+          🗑️ Haftayı Temizle
+        </button>
+        
         <button
           onClick={handleAutoGenerate}
-          className="ml-auto px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition">
+          className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition">
           Haftayı Oluştur
         </button>
       </div>
 
-      {/* 7 sütun */}
-      <div className="grid grid-cols-7 gap-3">
-        {daysArray().map((d,i)=>(
-          <div key={i} className="bg-white rounded-2xl border shadow-sm overflow-hidden">
-            <div className="px-3 py-2 border-b text-sm font-semibold">
-              {WEEKDAYS[i]} <span className="text-gray-500 font-normal">{d.format("DD.MM")}</span>
+      {/* 🆕 7 GÜN x 6 SLOT TABLO */}
+      <div className="grid grid-cols-7 gap-2">
+        {daysArray().map((d, dayIdx) => (
+          <div key={dayIdx} className="bg-white rounded-xl border shadow-sm overflow-hidden">
+            {/* Gün başlığı */}
+            <div className="px-2 py-2 border-b text-sm font-semibold bg-gray-50">
+              {WEEKDAYS[dayIdx]} <span className="text-gray-500 font-normal block text-xs">{d.format("DD.MM")}</span>
             </div>
 
-            <div className="p-2 space-y-2">
-              {DAY_SLOT_TIMES.map((time, idx)=>{
-                const dateISO = d.format("YYYY-MM-DD");
-                const key = `${dateISO}|${time}`;
-                const lesson = maps.lessonsMap.get(key);
+            {/* Slotlar */}
+            <div className="p-1 space-y-1">
+              {SLOTS.map(slot => {
+                const key = `${dayIdx}-${slot.id}`;
+                const lesson = lessonsByDayAndSlot.get(key);
 
                 if (!lesson) {
                   return (
-                    <div key={idx} className="h-14 rounded-xl border border-dashed text-xs flex items-center justify-between px-2 text-gray-400">
-                      <span>{time}</span>
+                    <div 
+                      key={slot.id} 
+                      className="h-14 rounded-lg border border-dashed text-xs flex flex-col items-center justify-center text-gray-400 hover:bg-gray-50 cursor-pointer transition">
+                      <div className="font-medium text-xs">{slot.label}</div>
+                      <div className="text-[10px] opacity-60">{slot.defaultTime}</div>
                     </div>
                   );
                 }
 
                 const student = lesson.studentId;
-                
-                // 🆕 Öğrenci silinmişse bu slotu gösterme
                 if (!student || !student._id) {
-                  console.warn("⚠️ Orphan ders bulundu:", lesson);
                   return (
-                    <div key={idx} className="h-14 rounded-xl border border-dashed text-xs flex items-center justify-between px-2 text-red-400">
-                      <span>{time}</span>
-                      <span className="text-xs">Silinmiş</span>
+                    <div key={slot.id} className="h-14 rounded-lg border border-dashed text-xs flex items-center justify-center text-red-400">
+                      <span>Hata</span>
                     </div>
                   );
                 }
 
+                const lessonStart = dayjs(lesson.startAt);
+                const lessonEnd = lessonStart.add(lesson.durationMin, 'minute');
+                
                 const statusStyle =
-                  lesson.status === "done" ? "bg-emerald-50 border-emerald-200"
-                : lesson.status === "no_show" ? "bg-rose-50 border-rose-200"
-                : lesson.status === "canceled" ? "bg-gray-50 border-gray-200"
-                : "bg-amber-50 border-amber-200";
+                  lesson.status === "done" ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                : lesson.status === "no_show" ? "bg-rose-50 border-rose-200 text-rose-900"
+                : lesson.status === "canceled" ? "bg-gray-50 border-gray-300 text-gray-600"
+                : "bg-amber-50 border-amber-200 text-amber-900";
 
                 return (
-                  <div key={idx}
-                       className={`h-14 rounded-xl border ${statusStyle} text-sm flex items-center justify-between px-2`}>
-                    <div className="truncate">
-                      <div className="font-medium truncate">{student?.name || "Öğrenci"}</div>
-                      <div className="text-xs text-gray-500">
-                        {time} • {lesson.status === "no_show" ? "Gelmedi" : lesson.status === "done" ? "Yapıldı" : lesson.status === "canceled" ? "İptal" : "Planlı"}
+                  <div key={slot.id}
+                       className={`h-14 rounded-lg border ${statusStyle} text-xs p-1.5 flex flex-col justify-between`}>
+                    <div>
+                      <div className="font-semibold text-xs truncate leading-tight">{student.name}</div>
+                      <div className="text-[10px] opacity-75 leading-tight">
+                        {lessonStart.format("HH:mm")}-{lessonEnd.format("HH:mm")} • {lesson.durationMin}dk
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-0.5 justify-end">
                       {busyId === lesson._id ? (
-                        <span className="inline-flex w-8 h-8 items-center justify-center">
-                          <Loader2 className="animate-spin" size={16}/>
+                        <span className="inline-flex w-5 h-5 items-center justify-center">
+                          <Loader2 className="animate-spin" size={10}/>
                         </span>
                       ) : lesson.status === "planned" ? (
                         <>
-                          <IconBtn title="Yapıldı" onClick={()=>handleMarkDone(lesson._id)}><Check size={16}/></IconBtn>
-                          <IconBtn title="İptal" onClick={()=>handleCancel(lesson._id)}><X size={16}/></IconBtn>
-                          <IconBtn title="Gelmedi" onClick={()=>handleNoShow(lesson._id)}><Ban size={16}/></IconBtn>
+                          <IconBtn title="Yapıldı" onClick={()=>handleMarkDone(lesson._id)}><Check size={10}/></IconBtn>
+                          <IconBtn title="İptal" onClick={()=>handleCancel(lesson._id)}><X size={10}/></IconBtn>
+                          <IconBtn title="Gelmedi" onClick={()=>handleNoShow(lesson._id)}><Ban size={10}/></IconBtn>
                         </>
                       ) : (
-                        <IconBtn title="Geri Al" onClick={()=>handleRevert(lesson._id)}><Undo2 size={16}/></IconBtn>
+                        <IconBtn title="Geri Al" onClick={()=>handleRevert(lesson._id)}><Undo2 size={10}/></IconBtn>
                       )}
                     </div>
                   </div>
@@ -269,7 +280,7 @@ function IconBtn({ title, onClick, children }) {
     <button
       title={title}
       onClick={onClick}
-      className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-white hover:bg-gray-50 active:scale-95 transition">
+      className="inline-flex items-center justify-center w-5 h-5 rounded border bg-white hover:bg-gray-100 active:scale-95 transition">
       {children}
     </button>
   );

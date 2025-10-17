@@ -8,40 +8,54 @@ export async function autoGenerateWeek(req, res) {
     const monday = dayjs().startOf("week").add(1, "day");
     let count = 0;
 
-    // 🔧 FIX 1: populate düzelt
+    // Aktif programları getir
     const schedules = await Schedule.find({ active: true }).populate("studentId");
     
     console.log(`📅 ${schedules.length} aktif plan bulundu`);
 
     for (const s of schedules) {
-      // 🔧 FIX 2: studentId kontrolü
+      // Öğrenci kontrolü
       if (!s.studentId || !s.studentId._id) {
         console.log(`⚠️ Plan ${s._id} için öğrenci bulunamadı, atlanıyor`);
         continue;
       }
+      
+      // 🆕 Geçici program kontrolü (endDate geçmişse atla)
+      if (s.endDate && dayjs(s.endDate).isBefore(dayjs())) {
+        console.log(`⏭️ ${s.studentId.name} için geçici program süresi dolmuş, atlanıyor`);
+        continue;
+      }
 
+      // 🔧 Ders tarihini hesapla - startTime veya eski time alanını kullan
+      const timeString = s.startTime || s.time;
+      if (!timeString) {
+        console.log(`⚠️ ${s.studentId.name} için saat bilgisi yok, atlanıyor`);
+        continue;
+      }
+
+      const [hour, minute] = timeString.split(":");
       const date = monday
         .add(s.weekday - 1, "day")
-        .hour(Number(s.time.split(":")[0]))
-        .minute(Number(s.time.split(":")[1]))
+        .hour(Number(hour))
+        .minute(Number(minute))
         .second(0)
         .millisecond(0);
 
-      // 🔧 FIX 3: Çakışma kontrolü düzelt
+      // Çakışma kontrolü
       const exists = await Lesson.findOne({
         studentId: s.studentId._id,
         startAt: { 
           $gte: date.toDate(), 
-          $lt: date.add(1, "minute").toDate() // 1 dakikalık aralık
+          $lt: date.add(1, "minute").toDate()
         },
       });
 
       if (exists) {
-        console.log(`⏭️  ${s.studentId.name} için ${date.format("DD.MM HH:mm")} dersi zaten var`);
+        console.log(`⏭️ ${s.studentId.name} için ${date.format("DD.MM HH:mm")} dersi zaten var`);
         continue;
       }
 
-      // Ders oluştur
+      // 🆕 Ders oluştur (slot numarasıyla)
       const newLesson = await Lesson.create({
         studentId: s.studentId._id,
         startAt: date.toDate(),
@@ -49,9 +63,10 @@ export async function autoGenerateWeek(req, res) {
         location: s.location || "home",
         status: "planned",
         linkedScheduleId: s._id,
+        slotNumber: s.slotNumber || 1 // 🆕 Slot numarası
       });
 
-      console.log(`✅ ${s.studentId.name} için ders oluşturuldu: ${date.format("DD.MM HH:mm")}`);
+      console.log(`✅ ${s.studentId.name} için ders oluşturuldu: ${date.format("DD.MM HH:mm")} (Slot ${s.slotNumber || 1})`);
       count++;
     }
 

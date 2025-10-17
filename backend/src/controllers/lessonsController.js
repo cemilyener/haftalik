@@ -4,6 +4,7 @@ import Lesson from "../models/Lesson.js";
 import Student from "../models/Student.js";
 import Transaction from "../models/Transaction.js";
 import { calcLessonAccrual } from "../utils/accrual.js";
+import dayjs from "dayjs";
 
 export async function listLessons(req, res) {
   try {
@@ -65,52 +66,94 @@ async function setStatus(req, res, status) {
   try {
     const { id } = req.params;
     
-    // 🔧 FIX 1: ID kontrolü
     if (!mongoose.isValidObjectId(id)) {
       return res.status(400).json({ error: "invalid lesson id" });
     }
 
-    // 🔧 FIX 2: populate ile öğrenciyi getir
     const les = await Lesson.findById(id).populate("studentId");
     if (!les) {
       return res.status(404).json({ error: "lesson not found" });
     }
 
-    // 🔧 FIX 3: Öğrenci kontrolü
     if (!les.studentId) {
       return res.status(400).json({ error: "student not found for this lesson" });
     }
 
+    const oldStatus = les.status;
     les.status = status;
     await les.save();
 
-    // Sadece "done" durumunda tahakkuk oluştur
-    if (status === "done") {
-      const s = les.studentId;
-      
-      // 🔧 FIX 4: Güvenli ücret hesaplama
-      const amount = calcLessonAccrual({
-        rateModel: s.rateModel || "per_lesson",
-        lessonFee: s.lessonFee || 0,
-        hourFee: s.hourFee || null,
-        durationMin: les.durationMin || 40,
-      });
+    const s = les.studentId;
 
-      if (amount !== 0) {
-        await Transaction.create({
-          studentId: s._id,
-          date: new Date(),
-          type: "lesson_accrual",
-          amount,
-          linkedLessonId: les._id,
-          note: "Auto accrual",
-        });
-        les.accrualAmount = amount;
-        await les.save();
+    // 🔧 Ders "done" olduğunda bakiye güncelle
+    if (status === "done" && oldStatus !== "done") {
+      let lessonPrice = 0;
+      
+      // ✅ SADECE DERS BAŞI ÖDEME MODELİNDE BAKIYE GÜNCELLE
+      if (s.rateModel === "per_lesson") {
+        lessonPrice = s.lessonFee || 0;
+        
+        if (lessonPrice > 0) {
+          // Bakiyeyi güncelle (ders yaptık = borç arttı)
+          s.balance = (s.balance || 0) - lessonPrice;
+          
+          // Ödeme bekleme tarihi
+          if (s.paymentType === "per_lesson" && !s.nextPaymentDue) {
+            s.nextPaymentDue = new Date(); // Hemen ödeme bekle
+          }
+          
+          await s.save();
+          
+          // Transaction kaydet
+          await Transaction.create({
+            studentId: s._id,
+            date: new Date(),
+            type: "lesson",
+            amount: -lessonPrice,
+            linkedLessonId: les._id,
+            note: "Ders yapıldı"
+          });
+          
+          les.accrualAmount = -lessonPrice;
+          await les.save();
+          
+          console.log(`✅ Ders tamamlandı: ${s.name} - ${lessonPrice} TL düşüldü. Yeni bakiye: ${s.balance} TL`);
+        }
+      } 
+      // ✅ AYLIK MODEL: Sadece log, bakiye dokunma (ay sonu otomatik işlenecek)
+      else if (s.rateModel === "monthly") {
+        console.log(`✅ Ders tamamlandı: ${s.name} (Aylık model - bakiye değişmedi)`);
+      }
+      // ✅ HYBRİD MODEL: Ders başı ücret
+      else if (s.rateModel === "hybrid") {
+        lessonPrice = s.lessonFee || 0;
+        
+        if (lessonPrice > 0) {
+          s.balance = (s.balance || 0) - lessonPrice;
+          await s.save();
+          
+          await Transaction.create({
+            studentId: s._id,
+            date: new Date(),
+            type: "lesson",
+            amount: -lessonPrice,
+            linkedLessonId: les._id,
+            note: "Ders yapıldı"
+          });
+          
+          les.accrualAmount = -lessonPrice;
+          await les.save();
+          
+          console.log(`✅ Ders tamamlandı: ${s.name} - ${lessonPrice} TL düşüldü. Yeni bakiye: ${s.balance} TL`);
+        }
       }
 
-      console.log(`✅ Ders tamamlandı: ${s.name} - ${amount} TL`);
-      return res.json({ ok: true, status: les.status, accrual: les.accrualAmount ?? 0 });
+      return res.json({ 
+        ok: true, 
+        status: les.status, 
+        balance: s.balance,
+        accrual: les.accrualAmount ?? 0 
+      });
     }
 
     return res.json({ ok: true, status: les.status });
@@ -118,8 +161,7 @@ async function setStatus(req, res, status) {
     console.error("setStatus error:", err);
     res.status(500).json({ 
       error: "Failed to update status", 
-      message: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      message: err.message
     });
   }
 }
@@ -182,5 +224,55 @@ export async function revertLesson(req, res) {
       message: err.message,
       stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
+  }
+}
+
+export async function deleteLesson(req, res) {
+  try {
+    const { id } = req.params;
+    
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ error: "invalid lesson id" });
+    }
+
+    const lesson = await Lesson.findByIdAndDelete(id);
+    if (!lesson) {
+      return res.status(404).json({ error: "lesson not found" });
+    }
+
+    // İlgili transaction'ları da sil
+    await Transaction.deleteMany({ linkedLessonId: id });
+
+    console.log(`🗑️ Ders silindi: ${id}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("deleteLesson error:", err);
+    res.status(500).json({ 
+      error: "Failed to delete lesson", 
+      message: err.message 
+    });
+  }
+}
+
+export async function clearWeek(req, res) {
+  try {
+    const { start, end } = req.query;
+    
+    if (!start || !end) {
+      return res.status(400).json({ error: "start and end dates required" });
+    }
+
+    const result = await Lesson.deleteMany({
+      startAt: {
+        $gte: new Date(start),
+        $lt: new Date(end)
+      }
+    });
+
+    console.log(`🗑️ ${result.deletedCount} ders silindi (${start} - ${end})`);
+    res.json({ ok: true, deletedCount: result.deletedCount });
+  } catch (err) {
+    console.error("❌ Clear week hatası:", err);
+    res.status(500).json({ error: "clearWeek failed", message: err.message });
   }
 }
