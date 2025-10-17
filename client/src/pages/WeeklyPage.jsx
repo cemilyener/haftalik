@@ -2,11 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
 import isoWeek from "dayjs/plugin/isoWeek";
 import { Weekly, Lessons, Students } from "../lib/api.js";
-import { Check, Undo2, X, Ban, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { Check, Undo2, X, Ban, ChevronLeft, ChevronRight, Loader2, AlertCircle } from "lucide-react";
 
 dayjs.extend(isoWeek);
 
-// Gün başına kısa görünüm – istediğin saatlere göre düzenleyebilirsin
 const DAY_SLOT_TIMES = ["09:30","13:00","18:00","19:30","20:00","20:30"];
 const WEEKDAYS = ["Pzt","Sal","Çar","Per","Cum","Cmt","Paz"];
 
@@ -18,17 +17,16 @@ function mondayStart(d){
 export default function WeeklyPage(){
   const [start, setStart] = useState(mondayStart(new Date()).format("YYYY-MM-DD"));
   const [data, setData] = useState({ lessons: [], schedules: [] });
-
-  // Performans: öğrencileri sadece ilk yüklemede alıyoruz
   const [students, setStudents] = useState([]);
-
-  // Optimistic UI için local kopya ve busy göstergesi
-  const [busyId, setBusyId] = useState(null);            // işlem yapılan lesson _id
+  const [busyId, setBusyId] = useState(null);
   const [lessonsMapLocal, setLessonsMapLocal] = useState(new Map());
+  
+  // 🆕 Boş slot sayısını takip et
+  const [emptySlots, setEmptySlots] = useState(0);
+  const [showAutoGenerate, setShowAutoGenerate] = useState(false);
 
   const end = useMemo(()=> dayjs(start).add(7, "day"), [start]);
 
-  // Öğrenciler (tek sefer)
   useEffect(()=>{
     (async ()=>{
       const studs = await Students.list();
@@ -36,22 +34,28 @@ export default function WeeklyPage(){
     })();
   }, []);
 
-  // Haftayı yenile
   async function refreshWeekly() {
     const weekly = await Weekly.get(start);
     setData(weekly);
 
-    // local haritayı güncelle
     const _map = new Map();
     (weekly.lessons||[]).forEach(l=>{
       const dt = dayjs(l.startAt);
       _map.set(`${dt.format("YYYY-MM-DD")}|${dt.format("HH:mm")}`, l);
     });
     setLessonsMapLocal(_map);
+
+    // 🆕 Boş slot kontrolü
+    const totalSchedules = (weekly.schedules || []).length;
+    const actualLessons = (weekly.lessons || []).length;
+    const emptyCount = totalSchedules - actualLessons;
+    
+    setEmptySlots(emptyCount);
+    setShowAutoGenerate(emptyCount > 0);
   }
+
   useEffect(()=>{ refreshWeekly(); }, [start]);
 
-  // Ekrana çizerken local (optimistic) haritayı kullan
   const maps = useMemo(()=>{
     const schedulesMap = new Map();
     (data.schedules||[]).forEach(s=>{
@@ -68,7 +72,6 @@ export default function WeeklyPage(){
     return Array.from({length:7}, (_,i)=> s.add(i,"day"));
   }
 
-  // Optimistic set helper
   function setLessonStatusOptimistic(lesson, status){
     const dt = dayjs(lesson.startAt);
     const key = `${dt.format("YYYY-MM-DD")}|${dt.format("HH:mm")}`;
@@ -77,7 +80,6 @@ export default function WeeklyPage(){
     setLessonsMapLocal(clone);
   }
 
-  // İşlemciler (hepsi optimistic + busy + sadece haftayı tazele)
   async function handleMarkDone(lessonId){
     try {
       setBusyId(lessonId);
@@ -89,6 +91,7 @@ export default function WeeklyPage(){
       await refreshWeekly();
     }
   }
+
   async function handleCancel(lessonId){
     try {
       setBusyId(lessonId);
@@ -100,7 +103,8 @@ export default function WeeklyPage(){
       await refreshWeekly();
     }
   }
-  async function handleNoShow(lessonId){ // “Gelmedi”
+
+  async function handleNoShow(lessonId){
     try {
       setBusyId(lessonId);
       const l = [...lessonsMapLocal.values()].find(x=>x._id===lessonId);
@@ -111,7 +115,8 @@ export default function WeeklyPage(){
       await refreshWeekly();
     }
   }
-  async function handleRevert(lessonId){ // “Geri Al”
+
+  async function handleRevert(lessonId){
     try {
       setBusyId(lessonId);
       const l = [...lessonsMapLocal.values()].find(x=>x._id===lessonId);
@@ -123,8 +128,41 @@ export default function WeeklyPage(){
     }
   }
 
+  // 🆕 Haftayı otomatik oluştur
+  async function handleAutoGenerate(){
+    if (!confirm(`${emptySlots} yeni ders oluşturulacak. Devam edilsin mi?`)) return;
+    
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${import.meta.env.VITE_API_BASE}/auto-plan/generate-week`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    const result = await res.json();
+    
+    alert(`✅ ${result.created} yeni ders oluşturuldu!`);
+    await refreshWeekly();
+  }
+
   return (
     <div className="space-y-4">
+      {/* 🆕 Uyarı mesajı */}
+      {showAutoGenerate && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+          <AlertCircle className="text-amber-600 mt-0.5" size={20}/>
+          <div className="flex-1">
+            <div className="font-medium text-amber-900">Bu hafta {emptySlots} sabit plan için ders oluşturulmamış</div>
+            <div className="text-sm text-amber-700 mt-1">
+              Öğrencilerin sabit planları var ama dersler oluşturulmamış. "Haftayı Oluştur" butonuna basarak otomatik oluşturabilirsin.
+            </div>
+          </div>
+          <button
+            onClick={handleAutoGenerate}
+            className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition whitespace-nowrap">
+            Haftayı Oluştur ({emptySlots})
+          </button>
+        </div>
+      )}
+
       {/* Üst bar */}
       <div className="flex items-center gap-2">
         <button
@@ -140,27 +178,16 @@ export default function WeeklyPage(){
           onClick={()=>setStart(dayjs(start).add(7,"day").format("YYYY-MM-DD"))}>
           Sonraki <ChevronRight size={16}/>
         </button>
+        
+        {/* Manuel buton (her zaman görünür) */}
         <button
-  onClick={async () => {
-    if (confirm("Bu haftanın derslerini otomatik oluşturmak istiyor musun?")) {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${import.meta.env.VITE_API_BASE}/auto-plan/generate-week`, {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      const data = await res.json();
-      alert(`Oluşturulan yeni ders sayısı: ${data.created}`);
-      window.location.reload();
-    }
-  }}
-  className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition"
->
-  Haftayı Oluştur
-</button>
-
+          onClick={handleAutoGenerate}
+          className="ml-auto px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition">
+          Haftayı Oluştur
+        </button>
       </div>
 
-      {/* 7 sütun – geniş ve ferah */}
+      {/* 7 sütun */}
       <div className="grid grid-cols-7 gap-3">
         {daysArray().map((d,i)=>(
           <div key={i} className="bg-white rounded-2xl border shadow-sm overflow-hidden">
@@ -175,7 +202,6 @@ export default function WeeklyPage(){
                 const lesson = maps.lessonsMap.get(key);
 
                 if (!lesson) {
-                  // Boş slot (kısa)
                   return (
                     <div key={idx} className="h-14 rounded-xl border border-dashed text-xs flex items-center justify-between px-2 text-gray-400">
                       <span>{time}</span>
@@ -184,11 +210,23 @@ export default function WeeklyPage(){
                 }
 
                 const student = lesson.studentId;
+                
+                // 🆕 Öğrenci silinmişse bu slotu gösterme
+                if (!student || !student._id) {
+                  console.warn("⚠️ Orphan ders bulundu:", lesson);
+                  return (
+                    <div key={idx} className="h-14 rounded-xl border border-dashed text-xs flex items-center justify-between px-2 text-red-400">
+                      <span>{time}</span>
+                      <span className="text-xs">Silinmiş</span>
+                    </div>
+                  );
+                }
+
                 const statusStyle =
                   lesson.status === "done" ? "bg-emerald-50 border-emerald-200"
                 : lesson.status === "no_show" ? "bg-rose-50 border-rose-200"
                 : lesson.status === "canceled" ? "bg-gray-50 border-gray-200"
-                : "bg-amber-50 border-amber-200"; // planned
+                : "bg-amber-50 border-amber-200";
 
                 return (
                   <div key={idx}

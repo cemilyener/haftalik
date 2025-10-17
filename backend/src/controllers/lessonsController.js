@@ -1,3 +1,4 @@
+// backend/src/controllers/lessonsController.js
 import mongoose from "mongoose";
 import Lesson from "../models/Lesson.js";
 import Student from "../models/Student.js";
@@ -16,7 +17,7 @@ export async function listLessons(req, res) {
     res.json(docs);
   } catch (err) {
     console.error("listLessons error:", err);
-    res.status(500).json({ error: "Failed to list lessons" });
+    res.status(500).json({ error: "Failed to list lessons", message: err.message });
   }
 }
 
@@ -42,7 +43,7 @@ export async function createLesson(req, res) {
     res.status(201).json(doc);
   } catch (err) {
     console.error("createLesson error:", err);
-    res.status(500).json({ error: "Failed to create lesson" });
+    res.status(500).json({ error: "Failed to create lesson", message: err.message });
   }
 }
 
@@ -56,27 +57,45 @@ export async function updateLesson(req, res) {
     res.json(doc);
   } catch (err) {
     console.error("updateLesson error:", err);
-    res.status(500).json({ error: "Failed to update lesson" });
+    res.status(500).json({ error: "Failed to update lesson", message: err.message });
   }
 }
 
 async function setStatus(req, res, status) {
   try {
     const { id } = req.params;
+    
+    // 🔧 FIX 1: ID kontrolü
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ error: "invalid lesson id" });
+    }
+
+    // 🔧 FIX 2: populate ile öğrenciyi getir
     const les = await Lesson.findById(id).populate("studentId");
-    if (!les) return res.status(404).json({ error: "lesson not found" });
+    if (!les) {
+      return res.status(404).json({ error: "lesson not found" });
+    }
+
+    // 🔧 FIX 3: Öğrenci kontrolü
+    if (!les.studentId) {
+      return res.status(400).json({ error: "student not found for this lesson" });
+    }
 
     les.status = status;
     await les.save();
 
+    // Sadece "done" durumunda tahakkuk oluştur
     if (status === "done") {
       const s = les.studentId;
+      
+      // 🔧 FIX 4: Güvenli ücret hesaplama
       const amount = calcLessonAccrual({
-        rateModel: s.rateModel,
-        lessonFee: s.lessonFee,
-        hourFee: s.hourFee,
-        durationMin: les.durationMin,
+        rateModel: s.rateModel || "per_lesson",
+        lessonFee: s.lessonFee || 0,
+        hourFee: s.hourFee || null,
+        durationMin: les.durationMin || 40,
       });
+
       if (amount !== 0) {
         await Transaction.create({
           studentId: s._id,
@@ -89,13 +108,19 @@ async function setStatus(req, res, status) {
         les.accrualAmount = amount;
         await les.save();
       }
+
+      console.log(`✅ Ders tamamlandı: ${s.name} - ${amount} TL`);
       return res.json({ ok: true, status: les.status, accrual: les.accrualAmount ?? 0 });
     }
 
     return res.json({ ok: true, status: les.status });
   } catch (err) {
     console.error("setStatus error:", err);
-    res.status(500).json({ error: "Failed to update status" });
+    res.status(500).json({ 
+      error: "Failed to update status", 
+      message: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 }
 
@@ -119,19 +144,31 @@ export async function createMakeup(req, res) {
     res.status(201).json(doc);
   } catch (err) {
     console.error("createMakeup error:", err);
-    res.status(500).json({ error: "Failed to create makeup lesson" });
+    res.status(500).json({ error: "Failed to create makeup lesson", message: err.message });
   }
 }
 
-/** ⬇️ YENİ: GERİ AL — dersi tekrar planned yap, tahakkuku sil */
 export async function revertLesson(req, res) {
   try {
     const { id } = req.params;
+    
+    // 🔧 FIX: ID kontrolü
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ error: "invalid lesson id" });
+    }
+
     const les = await Lesson.findById(id);
-    if (!les) return res.status(404).json({ error: "lesson not found" });
+    if (!les) {
+      return res.status(404).json({ error: "lesson not found" });
+    }
 
     // Bu derse bağlı tahakkuk varsa sil
-    await Transaction.deleteMany({ linkedLessonId: les._id, type: "lesson_accrual" });
+    const deleted = await Transaction.deleteMany({ 
+      linkedLessonId: les._id, 
+      type: "lesson_accrual" 
+    });
+
+    console.log(`🔄 ${deleted.deletedCount} tahakkuk kaydı silindi`);
 
     les.status = "planned";
     les.accrualAmount = undefined;
@@ -140,6 +177,10 @@ export async function revertLesson(req, res) {
     res.json({ ok: true, status: les.status });
   } catch (err) {
     console.error("revertLesson error:", err);
-    res.status(500).json({ error: "Failed to revert lesson" });
+    res.status(500).json({ 
+      error: "Failed to revert lesson", 
+      message: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 }

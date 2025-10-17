@@ -9,13 +9,13 @@ import PaymentsPage from "./pages/PaymentsPage.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 
 export default function App() {
-  const [token, setToken] = useState(localStorage.getItem("token"));
 
+   const [token, setToken] = useState(localStorage.getItem("token"));
   useEffect(() => {
-    if (token) {
-      axios.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-    }
+    if (token) axios.defaults.headers.common["Authorization"] = `Bearer ${token}`;
   }, [token]);
+
+
 
   // Login yoksa sadece login sayfası göster
   if (!token)

@@ -5,14 +5,16 @@ import {
   updateStudent,
   deleteStudent,
   getBalance,
-} from "../controllers/studentsController.js"; // doğru controller + .js
+  cleanupOrphanRecords // 🆕
+} from "../controllers/studentsController.js";
 
-const r = Router();
+const router = Router();
 
-r.get("/", listStudents);
-r.post("/", createStudent);
-r.put("/:id", updateStudent);
-r.delete("/:id", deleteStudent);
-r.get("/:id/balance", getBalance);
+router.get("/", listStudents);
+router.post("/", createStudent);
+router.put("/:id", updateStudent);
+router.delete("/:id", deleteStudent);
+router.get("/:id/balance", getBalance);
+router.post("/cleanup-orphans", cleanupOrphanRecords); // 🆕
 
-export default r;
+export default router;

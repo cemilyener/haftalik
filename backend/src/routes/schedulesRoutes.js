@@ -1,16 +1,17 @@
+// src/routes/schedulesRoutes.js
 import { Router } from "express";
 import {
   listSchedules,
   createSchedule,
   updateSchedule,
   deleteSchedule,
-} from "../controllers/schedulesController.js"; // tekil değil çoğul + .js
+} from "../controllers/schedulesController.js";
 
-const r = Router();
+const router = Router();
 
-r.get("/", listSchedules);
-r.post("/", createSchedule);
-r.put("/:id", updateSchedule);
-r.delete("/:id", deleteSchedule);
+router.get("/", listSchedules);
+router.post("/", createSchedule);
+router.put("/:id", updateSchedule);
+router.delete("/:id", deleteSchedule);
 
-export default r;
+export default router;

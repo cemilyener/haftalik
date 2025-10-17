@@ -1,57 +1,50 @@
-import mongoose from "mongoose";
+// src/controllers/schedulesController.js
 import Schedule from "../models/Schedule.js";
 
-export async function listSchedules(_req, res) {
+export async function listSchedules(req, res) {
   try {
-    const docs = await Schedule.find().populate("studentId").lean();
-    res.json(docs);
-  } catch (err) {
-    console.error("listSchedules error:", err);
-    res.status(500).json({ error: "Failed to list schedules" });
+    const { studentId, active } = req.query;
+    const q = {};
+    if (studentId) q.studentId = studentId;
+    if (active !== undefined) q.active = active === "true";
+    const items = await Schedule.find(q).populate("studentId");
+    res.json(items);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "listSchedules failed" });
   }
 }
 
 export async function createSchedule(req, res) {
   try {
-    const { studentId, weekday, time, durationMin = 40, location = "home", active = true } = req.body || {};
-    if (!studentId || !mongoose.isValidObjectId(studentId)) {
-      return res.status(400).json({ error: "valid studentId is required" });
-    }
-    if (!weekday || !time) {
-      return res.status(400).json({ error: "weekday and time are required" });
-    }
-    const doc = await Schedule.create({ studentId, weekday, time, durationMin, location, active });
-    res.status(201).json(doc);
-  } catch (err) {
-    console.error("createSchedule error:", err);
-    res.status(500).json({ error: "Failed to create schedule" });
+    const item = await Schedule.create(req.body);
+    res.status(201).json(item);
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: "createSchedule failed" });
   }
 }
 
 export async function updateSchedule(req, res) {
   try {
     const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) return res.status(400).json({ error: "invalid id" });
-
-    const doc = await Schedule.findByIdAndUpdate(id, req.body, { new: true });
-    if (!doc) return res.status(404).json({ error: "schedule not found" });
-
-    res.json(doc);
-  } catch (err) {
-    console.error("updateSchedule error:", err);
-    res.status(500).json({ error: "Failed to update schedule" });
+    const item = await Schedule.findByIdAndUpdate(id, req.body, { new: true });
+    if (!item) return res.status(404).json({ error: "not found" });
+    res.json(item);
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: "updateSchedule failed" });
   }
 }
 
 export async function deleteSchedule(req, res) {
   try {
     const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) return res.status(400).json({ error: "invalid id" });
-
-    await Schedule.findByIdAndDelete(id);
-    res.status(204).end();
-  } catch (err) {
-    console.error("deleteSchedule error:", err);
-    res.status(500).json({ error: "Failed to delete schedule" });
+    const item = await Schedule.findByIdAndDelete(id);
+    if (!item) return res.status(404).json({ error: "not found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: "deleteSchedule failed" });
   }
 }

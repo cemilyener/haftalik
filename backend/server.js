@@ -18,10 +18,23 @@ import autoPlanRoutes from "./src/routes/autoPlanRoutes.js";
 const app = express();
 
 const ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
+
+// 🔧 Çoklu origin desteği ekle
+const allowedOrigins = ORIGIN.split(',').map(o => o.trim());
+
 app.use(cors({
-  origin: ORIGIN,
+  origin: function(origin, callback) {
+    // Tarayıcı olmayan istekler (Postman) veya izin listesindeki originler
+    if (!origin || allowedOrigins.includes(origin) || ORIGIN === "*") {
+      callback(null, true);
+    } else {
+      console.warn(`⚠️ CORS rejected: ${origin}`);
+      callback(new Error('CORS policy violation'));
+    }
+  },
   methods: ["GET","POST","PUT","DELETE","OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
   optionsSuccessStatus: 204
 }));
 
@@ -40,7 +53,17 @@ app.use("/transactions", auth, transactionRoutes);
 app.use("/weekly", auth, weeklyRoutes);
 app.use("/billing", auth, billingRoutes);
 app.use("/reports", auth, reportsRoutes);
-app.use("/auto-plan", autoPlanRoutes);
+app.use("/auto-plan", auth, autoPlanRoutes); // ✅ auth ekle
+
+// Global error handler (route'lardan sonra, listen'den önce)
+app.use((err, req, res, next) => {
+  console.error("❌ Global error:", err);
+  res.status(err.status || 500).json({
+    error: err.message || "Internal server error",
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  });
+});
+
 const PORT = process.env.PORT || 3001;
 connectDB().then(() => {
   app.listen(PORT, () => console.log(`✅ API listening on :${PORT}`));
