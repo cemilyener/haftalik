@@ -24,8 +24,21 @@ const allowedOrigins = ORIGIN.split(',').map(o => o.trim());
 
 app.use(cors({
   origin: function(origin, callback) {
-    // Tarayıcı olmayan istekler (Postman) veya izin listesindeki originler
-    if (!origin || allowedOrigins.includes(origin) || ORIGIN === "*") {
+    // Tarayıcı olmayan istekler
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // Tüm originlere izin (*) 
+    if (ORIGIN === "*") {
+      return callback(null, true);
+    }
+    
+    // Vercel preview/production URL'lerini kabul et
+    const isVercelDomain = origin.endsWith('.vercel.app');
+    const isAllowedOrigin = allowedOrigins.includes(origin);
+    
+    if (isAllowedOrigin || isVercelDomain) {
       callback(null, true);
     } else {
       console.warn(`⚠️ CORS rejected: ${origin}`);
